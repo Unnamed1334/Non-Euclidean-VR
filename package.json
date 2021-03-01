@@ -1,0 +1,11 @@
+{
+  "name": "com.unnamed1334.non-euclidean-vr",
+  "version": "1.0.0",
+  "displayName": "Non-Euclidean VR",
+  "description": "Playspace increasing VR utility.",
+  "unity": "2019.3",
+  "keywords": [
+    "VR"
+  ],
+  "type": "library"
+}
