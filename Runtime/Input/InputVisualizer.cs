@@ -17,19 +17,22 @@ public class InputVisualizer : MonoBehaviour {
             indicators = root;
 
             GameObject go = CreateIndicator();
+            go.transform.localScale = 0.1f * Vector3.one;
             go.transform.parent = root.transform;
             go.transform.localPosition = Vector3.zero;
             int targetCount = 12;
             for (int i = 0; i < targetCount; i++) {
                 go = CreateIndicator();
+                go.transform.localScale = 0.025f * Vector3.one;
                 go.transform.parent = root.transform;
-                go.transform.localPosition = 0.5f * movement.maxRadius * new Vector3(Mathf.Cos(2 * Mathf.PI / targetCount * i), 0, Mathf.Sin(2 * Mathf.PI / targetCount * i));
+                go.transform.localPosition = movement.targetRadius * new Vector3(Mathf.Cos(2 * Mathf.PI / targetCount * i), 0.1f, Mathf.Sin(2 * Mathf.PI / targetCount * i));
             }
             int maxCount = 32;
             for (int i = 0; i < maxCount; i++) {
                 go = CreateIndicator();
+                go.transform.localScale = 0.05f * Vector3.one;
                 go.transform.parent = root.transform;
-                go.transform.localPosition = movement.maxRadius * new Vector3(Mathf.Cos(2 * Mathf.PI / maxCount * i), 0, Mathf.Sin(2 * Mathf.PI / maxCount * i));
+                go.transform.localPosition = movement.maxRadius * new Vector3(Mathf.Cos(2 * Mathf.PI / maxCount * i), 0.1f, Mathf.Sin(2 * Mathf.PI / maxCount * i));
             }
         }
     }

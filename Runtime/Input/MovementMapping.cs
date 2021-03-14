@@ -26,7 +26,18 @@ public class MovementMapping : MonoBehaviour {
     // Too large makes it easy to exit the play area with sudden dirrection changes.
     public float targetRadius = .5f;
 
+    // Working on a better system
+    public float rotationAcceleration;
+
+    public float rotationSpeed;
+
+    public float stepDistance = .1f;
+    public int stepCount = 20;
+
+
+
     // Feedback configuration
+    public List<GameObject> debugPath;
 
 
     private Vector3 lastCameraPosition;
@@ -39,77 +50,139 @@ public class MovementMapping : MonoBehaviour {
         if (!playerCamera) {
             Debug.LogError("Player Camera was not assigned.");
         }
+
+        for (int i = 0; i < stepCount; i++) {
+            GameObject indicator = CreateIndicator();
+            indicator.transform.parent = playerCamera.transform.parent;
+            debugPath.Add(indicator);
+        }
     }
 
     // Update is called once per frame
     void Update() {
         if (cameraRig && playerCamera) {
-            // Get the movement vector of the camera.
+            // Calculating the translation caused by the user moving
             Vector3 newCameraPosition = playerCamera.transform.localPosition;
             newCameraPosition.y = 0;
             Vector3 translation = newCameraPosition - lastCameraPosition;
             translation.y = 0;
-            // Distance is stored to make later code cleaner.
-            float dist = translation.magnitude;
-
-
-            // Calculating the new position in p
-            float tangentRadius = Mathf.Abs(newCameraPosition.x * translation.normalized.z - newCameraPosition.z * translation.normalized.x);
-            float parallelDistance = Vector3.Dot(translation.normalized, newCameraPosition);
-            // Do some cleanup to get good numbers. Apply max radius here as the equations are based on unit distances.
-            tangentRadius = 1 / maxRadius * tangentRadius;
-            parallelDistance = 1 / maxRadius * parallelDistance;
-            tangentRadius = Mathf.Clamp(tangentRadius, -1, 1);
-            parallelDistance = Mathf.Clamp(parallelDistance, -1, 1);
-
-
-            float rotationRadius;
-            float idealradius;
-            // Cases:
-            // -- Moveing outwards, in front of target
-            if (parallelDistance > 0) {
-                // Fallback case if the player manages to exit the play area.
-                // Use the minimum radius to try to correct.
-                if (newCameraPosition.magnitude > maxRadius) {
-                    rotationRadius = minimumCurvature;
-                }
-                else {
-                    idealradius = minimumCurvature + Mathf.Pow(1 - tangentRadius, 0.0625f) * ((tangentRadius + 0.5f) / 2 - minimumCurvature);
-                    // Minimum radius;
-                    idealradius = Mathf.Max(idealradius, minimumCurvature);
-                    rotationRadius = minimumCurvature + (idealradius - minimumCurvature) * Mathf.Pow(16, -new Vector3(parallelDistance, 0, tangentRadius - .5f).magnitude);
-                }
-            }
-            // -- Moving inwards, behind target
-            // ---- Above target
-            // ---- below target
-            else {
-                idealradius = Mathf.Max(minimumCurvature, minimumCurvature + Mathf.Pow(1 - tangentRadius, 0.0625f) * ((tangentRadius + 0.5f) / 2 - minimumCurvature));
-                // Strange hackery near the center to help dirrect the player away
-                if (newCameraPosition.magnitude < .2f) {
-                    idealradius -= Mathf.Min(3, 3 * (2 - 10 * newCameraPosition.magnitude));
-                }
-                rotationRadius = 1 / ((1 / idealradius) * (1 + parallelDistance) - parallelDistance * (-2 + 4 * tangentRadius));
-            }
-            // Convert to speed but clamp to the bounds
-            float rotAmmount = RadiusToSpeed(Mathf.Max(maxRadius * rotationRadius, minimumCurvature));
-            // Deadzone near center to remove the central singularity
-            if (newCameraPosition.magnitude < minimumCurvature) {
-                rotAmmount *= Mathf.Clamp01(10 * newCameraPosition.magnitude - 2);
-            }
-
-            // Use dirrection and displacement to get the rotation dirrection
-            rotAmmount *= Mathf.Sign(Vector3.Cross(translation, newCameraPosition).y) * dist;
-
-            // Use dirrection and displacement to get the rotation
-            cameraRig.transform.RotateAround(playerCamera.transform.position, Vector3.up, rotAmmount);
-
-
-            // Trying to remove some of the parameters so the only thing the player enters is radius.
-            //float inputRadius = maxRadius;
-
             lastCameraPosition = newCameraPosition;
+
+            // Calculate the optimal change to the rotation
+            rotationSpeed += CalculateRotationChange(newCameraPosition, translation.normalized, rotationSpeed) * translation.magnitude;
+            rotationSpeed = Mathf.Clamp(rotationSpeed, -RadiusToSpeed(minimumCurvature), RadiusToSpeed(minimumCurvature));
+
+            // Update the rotation
+            float rotationAmount = rotationSpeed * translation.magnitude;
+            // The sign of the rotation changes based on if the user is moving clockwise or counter-clockwise.
+            rotationAmount *= Mathf.Sign(Vector3.Cross(translation, newCameraPosition).y);
+            // Applied rotation is the opposite of what is desired.
+            // The user trying to counter rotation is what gives the desired effect.
+            cameraRig.transform.RotateAround(playerCamera.transform.position, Vector3.up, -rotationAmount);
         }
+    }
+
+    public float CalculateRotationChange(Vector3 position, Vector3 forward, float angleChange) {
+        bool positiveNext = false;
+        int bestI = 0;
+        float nextScore;
+        float bestScore = float.MaxValue;
+        for (int i = 0; i <= stepCount; i++) {
+            if (i != 0) {
+                nextScore = GetPathScore(position, forward, angleChange, true, i, stepCount - i, false);
+                if (nextScore < bestScore) {
+                    positiveNext = true;
+                    bestI = i;
+                    bestScore = nextScore;
+                }
+            }
+            if (i != stepCount) {
+                nextScore = GetPathScore(position, forward, angleChange, false, i, stepCount - i, false);
+                if (nextScore < bestScore) {
+                    positiveNext = false;
+                    bestI = i;
+                    bestScore = nextScore;
+                }
+            }
+        }
+
+        GetPathScore(position, forward, angleChange, positiveNext, bestI, stepCount - bestI, true);
+
+        if (positiveNext) {
+            return rotationAcceleration;
+        }
+        else {
+            return -rotationAcceleration;
+        }
+    }
+
+
+    public float GetPathScore(Vector3 position, Vector3 forward, float angleChange, bool posFirst, float posSteps, float negSteps, bool showPath) {
+
+        // Cleaning up the input
+        Vector3 currentPosition = position;
+        currentPosition.y = 0;
+        Vector3 currentForward = forward;
+        currentForward.y = 0;
+        currentForward = currentForward.normalized;
+        float currentAngleChange = angleChange;
+
+        float minScore = float.MaxValue;
+
+        //bool aboveTarget = transform.localPosition.magnitude > targetRadius;
+
+        for (int i = 0; i < stepCount; i++) {
+            // The angle of rotation changes depending on if going cw or ccw.
+            float movementdirrection = Mathf.Sign(Vector3.Cross(currentForward, currentPosition).y);
+
+            if (posFirst) {
+                if (i < posSteps) {
+                    currentAngleChange += rotationAcceleration * stepDistance;
+                }
+                else if (i < posSteps + negSteps) {
+                    currentAngleChange -= rotationAcceleration * stepDistance;
+                }
+            }
+            else {
+                if (i < negSteps) {
+                    currentAngleChange -= rotationAcceleration * stepDistance;
+                }
+                else if (i < posSteps + negSteps) {
+                    currentAngleChange += rotationAcceleration * stepDistance;
+                }
+            }
+
+
+            currentPosition += currentForward * stepDistance;
+            currentAngleChange = Mathf.Clamp(currentAngleChange, -RadiusToSpeed(minimumCurvature), RadiusToSpeed(minimumCurvature));
+            currentForward = Quaternion.Euler(0, movementdirrection * currentAngleChange * stepDistance, 0) * currentForward;
+
+            if (showPath) {
+                debugPath[i].transform.localPosition = currentPosition + (0.05f + Mathf.Min(0.5f, GetLocationScore(currentPosition, currentForward, currentAngleChange))) * Vector3.up;
+            }
+
+            // Prevent over-optimising local conditions by igoning the first few steps.
+            if (i > 4) {
+                minScore = Mathf.Min(minScore, GetLocationScore(currentPosition, currentForward, currentAngleChange));
+            }
+            else {
+                debugPath[i].transform.localScale = 0.035f * Vector3.one;
+            }
+        }
+
+        return minScore;
+    }
+
+    public float GetLocationScore(Vector3 localPosition, Vector3 forward, float angleChange) {
+        float score = 0;
+        // Distance from the target radius.
+        score += Mathf.Pow(Mathf.Abs(localPosition.magnitude - targetRadius), 2);
+        // Difference between curvatures
+        score += Mathf.Pow(Mathf.Abs(RadiusToSpeed(angleChange) + targetRadius), 2);
+        // Difference between centers
+        Vector3 centerPosition = localPosition + Mathf.Sign(Vector3.Cross(localPosition, forward).y) * targetRadius * Vector3.Cross(Vector3.up, forward).normalized;
+        //score += Mathf.Pow(centerPosition.magnitude, 2);
+        return score;
     }
 
     private float RadiusToSpeed(float radius) {
@@ -118,5 +191,17 @@ public class MovementMapping : MonoBehaviour {
             return 0;
         }
         return 360 / (2 * Mathf.PI * radius);
+    }
+
+
+    /// <summary>
+    /// Helper function for creating an indicator without using a prefab.
+    /// </summary>
+    /// <returns> Returns a colliderless sphere to use as a indicator. </returns>
+    public GameObject CreateIndicator() {
+        GameObject indicator = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+        Destroy(indicator.GetComponent<SphereCollider>());
+        indicator.transform.localScale = 0.05f * Vector3.one;
+        return indicator;
     }
 }
